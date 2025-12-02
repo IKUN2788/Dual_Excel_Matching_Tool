@@ -1,3 +1,5 @@
+<img width="1258" height="990" alt="image" src="https://github.com/user-attachments/assets/784606f7-044e-4a34-803e-3cf6674a43f7" />
+
 # 双表匹配神器
 
 一个基于 PyQt5 的桌面工具，用来对两张数据表进行快速匹配预览：
