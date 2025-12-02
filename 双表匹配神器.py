@@ -86,6 +86,10 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom_header = QtWidgets.QHBoxLayout()
         self.labelStatus = QtWidgets.QLabel("匹配状态：等待选择键列")
         bottom_header.addWidget(self.labelStatus, 1)
+        self.btnExportCSV = QtWidgets.QPushButton("导出CSV")
+        self.btnExportExcel = QtWidgets.QPushButton("导出Excel")
+        bottom_header.addWidget(self.btnExportCSV)
+        bottom_header.addWidget(self.btnExportExcel)
         bottom_layout.addLayout(bottom_header)
         self.previewTable = QtWidgets.QTableWidget()
         self.previewTable.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -94,6 +98,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btnOpenA.clicked.connect(lambda: self._open_file_dialog('A'))
         self.btnOpenB.clicked.connect(lambda: self._open_file_dialog('B'))
+        self.btnExportCSV.clicked.connect(self._export_csv)
+        self.btnExportExcel.clicked.connect(self._export_excel)
         self.leftPanel.setAcceptDrops(True)
         self.rightPanel.setAcceptDrops(True)
         self.leftPanel.installEventFilter(self)
@@ -231,11 +237,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.rowsA or not self.rowsB or not self.selectedKeyColsA:
             self.labelStatus.setText("匹配状态：等待选择键列")
             self.previewTable.clear()
+            self._update_export_buttons(False)
             return
         missing = [c for c in self.selectedKeyColsA if c not in self.columnsB]
         if missing:
             self.labelStatus.setText("匹配状态：B表缺少键列：" + ", ".join(missing))
             self.previewTable.clear()
+            self._update_export_buttons(False)
             return
         ka = self._key_set(self.rowsA, self.selectedKeyColsA)
         kb = self._key_set(self.rowsB, self.selectedKeyColsA)
@@ -247,29 +255,17 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             status = "不包含"
         self.labelStatus.setText(f"匹配状态：{status}（A唯一键{len(ka)}，B包含{len(inter)}）")
+        self._update_export_buttons(True)
         self._render_preview()
 
+    def _update_export_buttons(self, enabled):
+        if hasattr(self, 'btnExportCSV'):
+            self.btnExportCSV.setEnabled(bool(enabled))
+        if hasattr(self, 'btnExportExcel'):
+            self.btnExportExcel.setEnabled(bool(enabled))
+
     def _render_preview(self):
-        if not self.rowsA or not self.rowsB or not self.selectedKeyColsA:
-            self.previewTable.clear()
-            return
-        if any(c not in self.columnsB for c in self.selectedKeyColsA):
-            self.previewTable.clear()
-            return
-        b_map = {}
-        for row in self.rowsB:
-            k = tuple(str(row.get(c, "")) for c in self.selectedKeyColsA)
-            b_map.setdefault(k, []).append(row)
-        res_rows = []
-        a_cols = self.columnsA
-        b_cols = [c for c in self.selectedResultColsB]
-        for a in self.rowsA:
-            k = tuple(str(a.get(c, "")) for c in self.selectedKeyColsA)
-            if k in b_map:
-                for b in b_map[k]:
-                    combined = [str(a.get(c, "")) for c in a_cols] + [str(b.get(c, "")) for c in b_cols]
-                    res_rows.append(combined)
-        header = [str(c) for c in a_cols] + ["B:" + str(c) for c in b_cols]
+        header, res_rows = self._build_result()
         self.previewTable.clear()
         self.previewTable.setColumnCount(len(header))
         self.previewTable.setHorizontalHeaderLabels(header)
@@ -281,6 +277,78 @@ class MainWindow(QtWidgets.QMainWindow):
                 item = QtWidgets.QTableWidgetItem(str(v))
                 self.previewTable.setItem(i, j, item)
         self.previewTable.resizeColumnsToContents()
+
+    def _build_result(self):
+        if not self.rowsA or not self.rowsB or not self.selectedKeyColsA:
+            return [], []
+        if any(c not in self.columnsB for c in self.selectedKeyColsA):
+            return [], []
+        b_map = {}
+        for row in self.rowsB:
+            k = tuple(str(row.get(c, "")) for c in self.selectedKeyColsA)
+            b_map.setdefault(k, []).append(row)
+        res_rows = []
+        a_cols = self.columnsA
+        b_cols = [c for c in self.selectedResultColsB]
+        for a in self.rowsA:
+            k = tuple(str(a.get(c, "")) for c in self.selectedKeyColsA)
+            if k in b_map:
+                for b in b_map[k]:
+                    res_rows.append([str(a.get(c, "")) for c in a_cols] + [str(b.get(c, "")) for c in b_cols])
+        header = [str(c) for c in a_cols] + ["B:" + str(c) for c in b_cols]
+        return header, res_rows
+
+    def _export_csv(self):
+        header, rows = self._build_result()
+        if not header:
+            QtWidgets.QMessageBox.warning(self, "导出失败", "请先选择有效的键列并确保B表包含这些列")
+            return
+        base_dir = os.path.dirname(self.pathA or self.pathB or os.getcwd())
+        default = os.path.join(base_dir, "匹配结果.csv")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "导出CSV", default, "CSV 文件 (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(header)
+                for r in rows:
+                    w.writerow(r)
+            QtWidgets.QMessageBox.information(self, "导出成功", path)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "导出失败", str(e))
+
+    def _export_excel(self):
+        header, rows = self._build_result()
+        if not header:
+            QtWidgets.QMessageBox.warning(self, "导出失败", "请先选择有效的键列并确保B表包含这些列")
+            return
+        base_dir = os.path.dirname(self.pathA or self.pathB or os.getcwd())
+        default = os.path.join(base_dir, "匹配结果.xlsx")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "导出Excel", default, "Excel 文件 (*.xlsx)")
+        if not path:
+            return
+        if HAS_PANDAS:
+            try:
+                import pandas as pd
+                df = pd.DataFrame(rows, columns=header)
+                df.to_excel(path, index=False)
+                QtWidgets.QMessageBox.information(self, "导出成功", path)
+                return
+            except Exception as e:
+                pass
+        try:
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "结果"
+            ws.append(header)
+            for r in rows:
+                ws.append(r)
+            wb.save(path)
+            QtWidgets.QMessageBox.information(self, "导出成功", path)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "导出失败", str(e))
 
     def _key_set(self, rows, cols):
         s = set()
